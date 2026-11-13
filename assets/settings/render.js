@@ -180,7 +180,7 @@ export function renderSettingsPage(page) {
 </section>`;
 }
 
-function renderBanner(banner) {
+export function renderBanner(banner) {
   const message = banner.message || banner.reason || "";
   if (!message) return "";
   return `<p class="banner" data-banner>${escapeHtml(message)}</p>`;

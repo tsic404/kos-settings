@@ -11,7 +11,7 @@ KOS 系统应用项目：设置与成员扩展包 — 集群与节点设置、�
 - 设置项由扩展贡献，内核不硬编码（KOSD-C-23）；本仓的 `pkg/kossettings` 是这份声明的唯一来源。
 - 不提供未声明或未安装贡献的项（KOSD-F-16）：页面与设置项随系统组件出现与消失。
 - 不下发 kubeconfig 或服务账号令牌（KOSD-F-9）；产品只经控制面 API 读写，不持有集群凭据。
-- 用户页与资源占用的采样四态由后续子单交付；维护窗口的项、入口与读写用例（`SETTINGS-TC-136`）在本仓交付，窗口外拒绝的边界由 kosd 的维护发起按 KOSD-C-65 判窗（`SETTINGS-TC-137`，用例落在 `tsic404/kosd`）。
+- 用户页（SETTINGS-C-1）在本仓交付：成员与角色（数据库源）、应用可见性、应用与卷所有者（对象源）；资源占用的采样四态由后续子单交付，维护窗口的项、入口与读写用例（`SETTINGS-TC-136`）在本仓交付，窗口外拒绝的边界由 kosd 的维护发起按 KOSD-C-65 判窗（`SETTINGS-TC-137`，用例落在 `tsic404/kosd`）。
 
 ## 包布局
 
@@ -19,10 +19,13 @@ KOS 系统应用项目：设置与成员扩展包 — 集群与节点设置、�
 |---|---|---|
 | `pkg/kossettings/declaration.go` | 设置项与设置页声明：集群组与节点组的项、来源类型、动作与不可修改原因 | SETTINGS-C-36、KOSD-C-18、KOSD-C-23 |
 | `pkg/kossettings/readings.go` | 设置页的读模型：按声明的来源类型读取当前值，容量与用量分开 | SETTINGS-C-36、SETTINGS-C-71、KOSD-C-53 |
+| `pkg/kossettings/users.go` | 用户页的读模型：成员与角色（数据库源）、应用可见性与所有者（对象源）；数据库不可用时给出原因 | SETTINGS-C-1、KOSD-C-53、KOSD-C-59、KOSD-C-60、KOSD-C-61 |
 | `assets/settings/` | 设置页前端资源：逐项渲染当前值、来源类型、入口与不可修改原因；维护入口只对 Owner 出现 | SETTINGS-C-36、KOSD-C-17、KOSD-C-59、KOSD-C-73 |
+| `assets/users/` | 用户页前端资源：三项逐项渲染当前值与来源类型，写入入口按角色与行所有者给出 | SETTINGS-C-1、KOSD-C-17、KOSD-C-59 |
 | `pkg/kossettings/manifest.go` | 同一份声明生成的 kos-sdk 清单：KOSD-C-18 的封闭字段集合 | SDK-C-3 |
 | `pkg/kossettings/package.go` | 经 kos-sdk 打包：清单、UI 资产与包摘要 | SDK-C-4、KOSD-C-17 |
 | `cmd/kos-settings-pack/` | 打包入口：写出扩展包与摘要 | KOSD-C-17 |
+| `tests/acceptance/SETTINGS-TC-1/` | 用户页三项的来源、写入入口按角色与行所有者收敛、数据库不可用给原因、页面随组件消失 | SETTINGS-AC-1、SETTINGS-TC-1 |
 | `tests/acceptance/SETTINGS-TC-62/` | 设置页两组的项、来源类型与修改入口 | SETTINGS-AC-31、SETTINGS-TC-62 |
 | `tests/acceptance/SETTINGS-TC-138/` | 来源类型唯一：对象源随对象、数据库源随数据库、不可用给原因 | SETTINGS-AC-31、SETTINGS-TC-138 |
 | `tests/acceptance/KOSD-TC-155/` | 单独装载、卸载与重装；包结构与摘要；其余产品与内核对象不受影响 | KOSD-AC-72、KOSD-TC-155 |
@@ -30,7 +33,9 @@ KOS 系统应用项目：设置与成员扩展包 — 集群与节点设置、�
 设置页是服务端数据投影（KOSD-C-22、KOSD-C-53）：页面外壳按声明的来源类型读取每一项，本仓提供声明、读模型与页面资源。
 前端资源位于 `assets/settings/`，按 `assets/<path>` 入包并计入摘要：`index.html` 是入口文档，`app.js` 读取页面投影并提交声明的写入，`render.js` 逐项渲染当前值、来源类型、入口与不可修改原因，`settings.css` 提供样式。
 入口按投影裁剪：Owner 的投影带维护窗口写入与维护发起/恢复入口，Member 的投影不带任何 action 或 entry，页面因此只读且无入口（KOSD-C-59）。
-用户页（SETTINGS-C-1）仍由后续子单交付。
+用户页（SETTINGS-C-1）由 `users` 页承接：`pkg/kossettings/users.go` 按声明的来源读取三项，前端资源位于 `assets/users/`，逐行渲染账号、可见性与所有者，并只对会话可写的行给出写入表单。
+用户页的写入入口按角色与行判定：账号与角色、所有者转移只由 Owner 写（KOSD-C-59、KOSD-C-60），页面只对 Owner 给出这两项的入口；应用可见性按行所有者判定（KOSD-C-59），Member 只在自己拥有的应用行看到入口，Guest 与其余行按只读显示。两项对象源都按会话的可见性谓词裁剪（KOSD-C-53）。
+可见性行的成员一栏每行一个登录名，登录名内的顿号、空格与逗号原样保留；回填与保存是同一个分隔符，逐名不变。
 
 ## 构建与测试
 

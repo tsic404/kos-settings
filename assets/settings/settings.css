@@ -136,7 +136,8 @@ body {
 }
 
 .item-field input,
-.item-field select {
+.item-field select,
+.item-field textarea {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface-muted);

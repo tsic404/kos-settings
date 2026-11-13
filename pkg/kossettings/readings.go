@@ -20,6 +20,7 @@ import (
 	"github.com/tsic404/kosd/pkg/extension"
 	"github.com/tsic404/kosd/pkg/identity"
 	"github.com/tsic404/kosd/pkg/pages"
+	"github.com/tsic404/kosd/pkg/pages/cluster"
 	"github.com/tsic404/kosd/pkg/settings"
 )
 
@@ -74,10 +75,10 @@ type AuditReader interface {
 	RecentAuditEntriesForObject(ctx context.Context, object string, verbs, results []string, limit int) ([]identity.AuditEntry, error)
 }
 
-// Readings resolves every item the settings page declares (C-53): the cluster
-// and node facts of C-36 and the setting values it contributes. Each read
-// stamps the moment it observed the value, so the page shell applies the one
-// freshness bound of C-13.
+// Readings resolves every item the product's pages declare (C-53): the cluster
+// and node facts of C-36, the setting values it contributes and the user page's
+// member list and ownership facts (C-1). Each read stamps the moment it observed
+// the value, so the page shell applies the one freshness bound of C-13.
 type Readings struct {
 	// Dynamic reads the cluster objects the object and computed items judge.
 	Dynamic dynamic.Interface
@@ -88,6 +89,9 @@ type Readings struct {
 	// Usage reports the sampled node consumption of C-36's usage items; nil
 	// leaves the item stating that no metric source is configured.
 	Usage UsageSource
+	// Members reads the accounts the user page shows (C-1); nil or a failing
+	// read leaves the item stating why it cannot list them (KOSD-C-61).
+	Members MemberSource
 	// Now supplies the read clock; defaults to time.Now.
 	Now func() time.Time
 }
@@ -145,7 +149,13 @@ func (r *Readings) value(ctx context.Context, session identity.Session, item ext
 	case NodeLevelConfiguration:
 		// The configuration lives on the host, outside the object model; the
 		// item states that instead of showing a made-up value (C-36).
-		return map[string]any{"available": false, "reason": NodeConfigurationReason}, nil
+		return unavailableValue(NodeConfigurationReason), nil
+	case UserMembersAndRoles:
+		return r.memberRoles(ctx)
+	case UserAppVisibility:
+		return r.appVisibility(ctx, session)
+	case UserAppAndVolumeOwners:
+		return r.appAndVolumeOwners(ctx, session)
 	default:
 		return nil, unreadable("页面项 " + item.ID + " 没有来源")
 	}
@@ -861,7 +871,13 @@ func (r *Readings) nodes(ctx context.Context) ([]corev1.Node, *controlplane.Erro
 	return nodes, nil
 }
 
-// kernel reads every object of one kernel kind.
+// reader returns the kernel reader the C-59 predicates run on: the same client
+// and clock the item's own read uses, so one page judges one cluster.
+func (r *Readings) reader() *cluster.Reader {
+	return &cluster.Reader{Dynamic: r.Dynamic, Now: r.Now}
+}
+
+// kernel reads one kernel kind's objects; an empty namespace reads every one.
 func (r *Readings) kernel(ctx context.Context, kind string) ([]unstructured.Unstructured, *controlplane.Error) {
 	resource, ok := api.ResourceName(kind)
 	if !ok {

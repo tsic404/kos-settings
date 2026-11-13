@@ -36,6 +36,9 @@ var Owner = identity.Session{Username: "owner", Role: write.RoleOwner}
 // Member is a signed-in account without the Owner role.
 var Member = identity.Session{Username: "member", Role: write.RoleMember}
 
+// Guest is a signed-in account with the Guest role.
+var Guest = identity.Session{Username: "guest", Role: write.RoleGuest}
+
 // ItemExpectation is one display item as SETTINGS-C-36 declares it: the source
 // type that judges it and whether the user may modify it.
 type ItemExpectation struct {
@@ -196,6 +199,38 @@ func (v *Values) SetSettingValue(_ context.Context, scope, target, identifier, v
 	return nil
 }
 
+// Roster is the control-plane database's account table. Err makes every read
+// fail the way a stopped database does (C-61); the accounts themselves are what
+// the user page's database item reports.
+type Roster struct {
+	// Err is returned by every read while set.
+	Err error
+	// accounts is the table the page reads.
+	accounts []identity.Account
+}
+
+// NewRoster returns a database holding the given accounts.
+func NewRoster(accounts ...identity.Account) *Roster {
+	return &Roster{accounts: accounts}
+}
+
+// Down makes the roster answer like a stopped control-plane database.
+func (r *Roster) Down() { r.Err = errors.New("database is not answering") }
+
+// Up restores the roster.
+func (r *Roster) Up() { r.Err = nil }
+
+// Add appends one account to the table.
+func (r *Roster) Add(account identity.Account) { r.accounts = append(r.accounts, account) }
+
+// ListAccounts implements kossettings.MemberSource.
+func (r *Roster) ListAccounts(_ context.Context) ([]identity.Account, error) {
+	if r.Err != nil {
+		return nil, r.Err
+	}
+	return append([]identity.Account(nil), r.accounts...), nil
+}
+
 // Shell is one installed product's page and settings projection over the same
 // object set and value store.
 type Shell struct {
@@ -212,13 +247,20 @@ type Shell struct {
 
 // NewShell wires the settings domain and the page shell over one registry and
 // object set. The product's read model answers every declared server source;
-// the usage items state that no metric source is configured.
-func NewShell(t *testing.T, registry *extension.Registry, cluster dynamic.Interface, values *Values) *Shell {
+// the usage items state that no metric source is configured. A roster, when
+// given, is the control-plane database's account table the user page reads;
+// without one the page states that the database holds no account it can show.
+func NewShell(t *testing.T, registry *extension.Registry, cluster dynamic.Interface, values *Values, roster ...*Roster) *Shell {
 	t.Helper()
 	service := settings.New(registry, values, settings.Config{})
+	members := NewRoster()
+	if len(roster) > 0 && roster[0] != nil {
+		members = roster[0]
+	}
 	readings := &kossettings.Readings{
 		Dynamic:  cluster,
 		Settings: service,
+		Members:  members,
 		Now:      func() time.Time { return time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC) },
 	}
 	return &Shell{
@@ -294,6 +336,85 @@ func Cordone(t *testing.T, cluster dynamic.Interface, name string) {
 	}
 }
 
+// Application writes one application with the owner and visibility the user
+// page reads (C-1, C-59, C-60).
+func Application(t *testing.T, cluster dynamic.Interface, namespace, name, owner string, members []string, allowGuests bool) {
+	t.Helper()
+	visibility := map[string]any{"allowGuests": allowGuests}
+	listed := make([]any, 0, len(members))
+	for _, member := range members {
+		listed = append(listed, member)
+	}
+	if len(listed) > 0 {
+		visibility["members"] = listed
+	}
+	resource, _ := api.ResourceName("Application")
+	createIn(t, cluster, schema.GroupVersionResource{
+		Group: api.Group, Version: v1beta1.GroupVersion.Version, Resource: resource,
+	}, namespace, map[string]any{
+		"apiVersion": api.Group + "/" + v1beta1.GroupVersion.Version,
+		"kind":       "Application",
+		"metadata":   map[string]any{"name": name, "namespace": namespace},
+		"spec": map[string]any{
+			"owner": owner, "visibility": visibility, "namespace": namespace, "definitionRef": name,
+		},
+	})
+}
+
+// Volume writes one volume with the owner the user page reads (C-1, C-60).
+func Volume(t *testing.T, cluster dynamic.Interface, namespace, name, owner string) {
+	t.Helper()
+	resource, _ := api.ResourceName("Volume")
+	createIn(t, cluster, schema.GroupVersionResource{
+		Group: api.Group, Version: v1beta1.GroupVersion.Version, Resource: resource,
+	}, namespace, map[string]any{
+		"apiVersion": api.Group + "/" + v1beta1.GroupVersion.Version,
+		"kind":       "Volume",
+		"metadata":   map[string]any{"name": name, "namespace": namespace},
+		"spec":       map[string]any{"owner": owner, "mobility": "node-local", "capacity": "1Gi"},
+	})
+}
+
+// SetApplicationVisibility rewrites one application's visibility, the way the
+// owner or the global Owner does (C-59).
+func SetApplicationVisibility(t *testing.T, cluster dynamic.Interface, namespace, name string, members []string, allowGuests bool) {
+	t.Helper()
+	listed := make([]any, 0, len(members))
+	for _, member := range members {
+		listed = append(listed, member)
+	}
+	updateSpec(t, cluster, "Application", namespace, name, "visibility", map[string]any{
+		"members": listed, "allowGuests": allowGuests,
+	})
+}
+
+// SetObjectOwner rewrites one owned object's owner, the way the global Owner's
+// transfer does (C-60).
+func SetObjectOwner(t *testing.T, cluster dynamic.Interface, kind, namespace, name, owner string) {
+	t.Helper()
+	updateSpec(t, cluster, kind, namespace, name, "owner", owner)
+}
+
+// updateSpec rewrites one field of a kernel object's spec.
+func updateSpec(t *testing.T, cluster dynamic.Interface, kind, namespace, name, field string, value any) {
+	t.Helper()
+	resource, ok := api.ResourceName(kind)
+	if !ok {
+		t.Fatalf("kernel kind %q has no resource name", kind)
+	}
+	gvr := schema.GroupVersionResource{Group: api.Group, Version: v1beta1.GroupVersion.Version, Resource: resource}
+	object, err := cluster.Resource(gvr).Namespace(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("read %s %s/%s: %v", kind, namespace, name, err)
+	}
+	if err := unstructured.SetNestedField(object.Object, value, "spec", field); err != nil {
+		t.Fatalf("set %s.%s of %s/%s: %v", field, kind, namespace, name, err)
+	}
+	if _, err := cluster.Resource(gvr).Namespace(namespace).Update(context.Background(), object, metav1.UpdateOptions{}); err != nil {
+		t.Fatalf("update %s %s/%s: %v", kind, namespace, name, err)
+	}
+}
+
 // Capability is one capability a provider registers and the result KOS
 // verified it with (C-09, C-10).
 type Capability struct {
@@ -340,6 +461,15 @@ func create(t *testing.T, cluster dynamic.Interface, resource schema.GroupVersio
 	t.Helper()
 	if _, err := cluster.Resource(resource).Create(context.Background(), &unstructured.Unstructured{Object: object}, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("create %s: %v", resource.Resource, err)
+	}
+}
+
+// createIn stores one namespaced object in the fake client; the client refuses a
+// namespace the resource call does not name.
+func createIn(t *testing.T, cluster dynamic.Interface, resource schema.GroupVersionResource, namespace string, object map[string]any) {
+	t.Helper()
+	if _, err := cluster.Resource(resource).Namespace(namespace).Create(context.Background(), &unstructured.Unstructured{Object: object}, metav1.CreateOptions{}); err != nil {
+		t.Fatalf("create %s in %q: %v", resource.Resource, namespace, err)
 	}
 }
 
