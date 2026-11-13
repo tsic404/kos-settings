@@ -1,6 +1,6 @@
 // Package kossettings is the kos-settings product: the cluster and node
-// settings the panel shows (C-36) and the modifiable item the product
-// contributes (C-23), with the sources its settings page reads (C-53). Every
+// settings and the user page the panel shows (C-36, C-1), the modifiable item
+// the product contributes (C-23), and the sources its pages read (C-53). Every
 // item below is this package's own declaration; the kernel hardcodes none of
 // them, so the items appear and disappear with the component (C-23, F16).
 package kossettings
@@ -56,6 +56,26 @@ const (
 // PageSettings is the settings page this product declares (C-22, C-36).
 const PageSettings = "settings"
 
+// PageUsers is the user page SETTINGS-C-1 puts in the panel.
+const PageUsers = "users"
+
+// Item identities of the user page: the three items SETTINGS-C-1 declares, one
+// per source the page shows.
+const (
+	UserMembersAndRoles    = "users-members-and-roles"
+	UserAppVisibility      = "users-app-visibility"
+	UserAppAndVolumeOwners = "users-app-and-volume-owners"
+)
+
+// Action identities of the user page. Every entry addresses the identity the
+// browser fills from the row it edits, so one entry serves every row of its
+// item.
+const (
+	ActionSetMemberRole    = "set-member-role"
+	ActionSetAppVisibility = "set-app-visibility"
+	ActionTransferOwner    = "transfer-owner"
+)
+
 // Action identities of the settings page. A node-scoped write needs the node it
 // applies to, so its path carries the "{node}" placeholder the browser fills
 // with the node chosen in the panel. A maintenance start also needs the declared
@@ -90,7 +110,7 @@ func Declaration() extension.Declaration {
 				Writer:   extension.SettingWriterUser,
 				Editable: true,
 			}},
-			Pages: []extension.Page{settingsPage()},
+			Pages: []extension.Page{settingsPage(), usersPage()},
 		},
 	}
 }
@@ -139,6 +159,33 @@ func settingsPage() extension.Page {
 			// entries appear for that role and for no other.
 			{ID: ActionStartMaintenance, Method: http.MethodPost, Path: "/api/v1/node-maintenance?node={node}&downtime={downtime}", RequiredRole: string(write.RoleOwner)},
 			{ID: ActionRestoreMaintenance, Method: http.MethodDelete, Path: "/api/v1/node-maintenance/{node}", RequiredRole: string(write.RoleOwner)},
+		},
+	}
+}
+
+// usersPage declares the user page SETTINGS-C-1 puts in the panel: the member
+// list from the control-plane database, the applications' visibility and the
+// owned applications and volumes. The page reads for every signed-in role; the
+// account write and the owner transfer name the Owner, and the visibility entry
+// follows each row's owner (KOSD-C-53, KOSD-C-59).
+func usersPage() extension.Page {
+	return extension.Page{
+		ID:       PageUsers,
+		Title:    "用户",
+		Location: "panel",
+		Items: []extension.PageItem{
+			{ID: UserMembersAndRoles, Label: "成员与角色", Source: extension.PageSourceDatabase, Reference: reference(UserMembersAndRoles), Action: ActionSetMemberRole},
+			{ID: UserAppVisibility, Label: "应用可见性", Source: extension.PageSourceObject, Reference: reference(UserAppVisibility), Action: ActionSetAppVisibility},
+			{ID: UserAppAndVolumeOwners, Label: "应用与卷所有者", Source: extension.PageSourceObject, Reference: reference(UserAppAndVolumeOwners), Action: ActionTransferOwner},
+		},
+		Actions: []extension.Action{
+			// Account management and owner transfer are the Owner's writes
+			// (C-59, C-60). Application visibility follows its row's owner
+			// (KOSD-C-59), so this action is declared for every role the page
+			// admits and each row carries whether the session may write it.
+			{ID: ActionSetMemberRole, Method: http.MethodPut, Path: "/api/v1/accounts/{username}", RequiredRole: string(write.RoleOwner)},
+			{ID: ActionSetAppVisibility, Method: http.MethodPut, Path: "/api/v1/resources/Application/{name}?namespace={namespace}"},
+			{ID: ActionTransferOwner, Method: http.MethodPut, Path: "/api/v1/resources/{kind}/{name}?namespace={namespace}", RequiredRole: string(write.RoleOwner)},
 		},
 	}
 }
