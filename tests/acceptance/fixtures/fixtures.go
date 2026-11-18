@@ -231,6 +231,41 @@ func (r *Roster) ListAccounts(_ context.Context) ([]identity.Account, error) {
 	return append([]identity.Account(nil), r.accounts...), nil
 }
 
+// Sample builds one node's sampled consumption in the shape the metric source
+// reports it (C-71).
+func Sample(name, cpu, memory string) kossettings.NodeUsageSample {
+	return kossettings.NodeUsageSample{Name: name, CPU: cpu, Memory: memory}
+}
+
+// Usage is the controllable metric source the resource-occupancy cases drive.
+// Err makes every read fail the way an unreachable metric source does; Set
+// replaces the samples the next read reports, including with none at all
+// (C-71).
+type Usage struct {
+	// Err is returned by every read while set.
+	Err error
+	// samples is what the next read reports, one per covered node.
+	samples []kossettings.NodeUsageSample
+}
+
+// NewUsage returns a metric source reporting the given samples.
+func NewUsage(samples ...kossettings.NodeUsageSample) *Usage {
+	return &Usage{samples: append([]kossettings.NodeUsageSample(nil), samples...)}
+}
+
+// Set replaces the samples the source reports; no samples is an empty window.
+func (u *Usage) Set(samples ...kossettings.NodeUsageSample) {
+	u.samples = append([]kossettings.NodeUsageSample(nil), samples...)
+}
+
+// NodeUsage implements kossettings.UsageSource.
+func (u *Usage) NodeUsage(_ context.Context) ([]kossettings.NodeUsageSample, error) {
+	if u.Err != nil {
+		return nil, u.Err
+	}
+	return append([]kossettings.NodeUsageSample(nil), u.samples...), nil
+}
+
 // Shell is one installed product's page and settings projection over the same
 // object set and value store.
 type Shell struct {
@@ -243,6 +278,10 @@ type Shell struct {
 	Settings *settings.Service
 	// Pages is the shell that renders the declared pages (C-22, C-53).
 	Pages *pages.Service
+	// readings is the read model behind the page shell, so a case can detach
+	// the metric source and read the state a distribution without one is in
+	// (C-71).
+	readings *kossettings.Readings
 }
 
 // NewShell wires the settings domain and the page shell over one registry and
@@ -251,6 +290,14 @@ type Shell struct {
 // given, is the control-plane database's account table the user page reads;
 // without one the page states that the database holds no account it can show.
 func NewShell(t *testing.T, registry *extension.Registry, cluster dynamic.Interface, values *Values, roster ...*Roster) *Shell {
+	t.Helper()
+	return NewShellWithUsage(t, registry, cluster, values, nil, roster...)
+}
+
+// NewShellWithUsage wires the same shell as NewShell with a controllable
+// metric source, so a case can read the usage items through their states; a nil
+// source is the distribution that integrates none (C-71).
+func NewShellWithUsage(t *testing.T, registry *extension.Registry, cluster dynamic.Interface, values *Values, usage *Usage, roster ...*Roster) *Shell {
 	t.Helper()
 	service := settings.New(registry, values, settings.Config{})
 	members := NewRoster()
@@ -263,12 +310,22 @@ func NewShell(t *testing.T, registry *extension.Registry, cluster dynamic.Interf
 		Members:  members,
 		Now:      func() time.Time { return time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC) },
 	}
+	if usage != nil {
+		readings.Usage = usage
+	}
 	return &Shell{
 		Cluster:  cluster,
 		Values:   values,
 		Settings: service,
 		Pages:    pages.New(registry, pages.Config{Readings: pages.Router{kossettings.Identifier: readings}}),
+		readings: readings,
 	}
+}
+
+// DetachMetricSource removes the metric source from the read model, the state a
+// distribution that integrates none is in (C-71).
+func (s *Shell) DetachMetricSource() {
+	s.readings.Usage = nil
 }
 
 // ObjectSet builds a fake dynamic client holding the kernel objects the cases

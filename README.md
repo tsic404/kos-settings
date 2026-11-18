@@ -11,7 +11,7 @@ KOS 系统应用项目：设置与成员扩展包 — 集群与节点设置、�
 - 设置项由扩展贡献，内核不硬编码（KOSD-C-23）；本仓的 `pkg/kossettings` 是这份声明的唯一来源。
 - 不提供未声明或未安装贡献的项（KOSD-F-16）：页面与设置项随系统组件出现与消失。
 - 不下发 kubeconfig 或服务账号令牌（KOSD-F-9）；产品只经控制面 API 读写，不持有集群凭据。
-- 用户页（SETTINGS-C-1）在本仓交付：成员与角色（数据库源）、应用可见性、应用与卷所有者（对象源）；资源占用的采样四态由后续子单交付，维护窗口的项、入口与读写用例（`SETTINGS-TC-136`）在本仓交付，窗口外拒绝的边界由 kosd 的维护发起按 KOSD-C-65 判窗（`SETTINGS-TC-137`，用例落在 `tsic404/kosd`）。
+- 用户页（SETTINGS-C-1）在本仓交付：成员与角色（数据库源）、应用可见性、应用与卷所有者（对象源）；维护窗口的项、入口与读写用例（`SETTINGS-TC-136`）在本仓交付，窗口外拒绝的边界由 kosd 的维护发起按 KOSD-C-65 判窗（`SETTINGS-TC-137`，用例落在 `tsic404/kosd`）。
 
 ## 包布局
 
@@ -27,6 +27,7 @@ KOS 系统应用项目：设置与成员扩展包 — 集群与节点设置、�
 | `cmd/kos-settings-pack/` | 打包入口：写出扩展包与摘要 | KOSD-C-17 |
 | `tests/acceptance/SETTINGS-TC-1/` | 用户页三项的来源、写入入口按角色与行所有者收敛、数据库不可用给原因、页面随组件消失 | SETTINGS-AC-1、SETTINGS-TC-1 |
 | `tests/acceptance/SETTINGS-TC-62/` | 设置页两组的项、来源类型与修改入口 | SETTINGS-AC-31、SETTINGS-TC-62 |
+| `tests/acceptance/SETTINGS-TC-135/` | 资源占用的四态：完整样本、空样本集、缺一个节点样本、未接入指标源；容量在四态都可读，页面把不可用的用量项渲染成原因且不带用量 | SETTINGS-AC-64、SETTINGS-TC-135 |
 | `tests/acceptance/SETTINGS-TC-138/` | 来源类型唯一：对象源随对象、数据库源随数据库、不可用给原因 | SETTINGS-AC-31、SETTINGS-TC-138 |
 | `tests/acceptance/KOSD-TC-155/` | 单独装载、卸载与重装；包结构与摘要；其余产品与内核对象不受影响 | KOSD-AC-72、KOSD-TC-155 |
 
